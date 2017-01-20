@@ -1,25 +1,11 @@
-// Copyright 2016 laosj Author @songtianyi. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package main
 
 import (
-	//"github.com/songtianyi/laosj/downloader"
 	"flag"
 	"fmt"
 	"github.com/PuerkitoBio/goquery"
-	"github.com/songtianyi/laosj/spider"
+	"github.com/figoxu/laosj/spider"
+	"github.com/quexer/utee"
 	"github.com/songtianyi/rrframework/logs"
 	"github.com/songtianyi/rrframework/storage"
 	"github.com/songtianyi/rrframework/utils"
@@ -45,15 +31,13 @@ const (
 func parseStar(item string, artist string) {
 	m := regexp.MustCompile("href=\"(\\S+)\"").FindStringSubmatch(item)
 	if len(m) < 2 {
-		logs.Error("Find href error, %s", "len(m) < 2")
-		return
+		utee.Chk(fmt.Errorf("Find href error, %s", "len(m) < 2"))
 	}
 	url := m[1]
 	jvname := strings.Split(url, "=")[1]
 	s, err := spider.CreateSpiderFromUrl(JAV_PREFIX + url + "&mode=2")
 	if err != nil {
-		logs.Error(err)
-		return
+		utee.Chk(err)
 	}
 	arts, _ := s.GetText("div.videothumblist>div.videos>div.video>a>div.id")
 	artsrcs, _ := s.GetHtml("div.videothumblist>div.videos>div.video>a")
@@ -62,14 +46,12 @@ func parseStar(item string, artist string) {
 		logs.Error(s.Url, len(artsrcs), len(arts))
 		logs.Debug(artsrcs)
 		logs.Debug(arts)
-		panic(fmt.Errorf(""))
-		return
+		utee.Chk(fmt.Errorf(""))
 	}
 	for i, artsrc := range artsrcs {
 		m1 := regexp.MustCompile("src=\"(\\S+)\"").FindStringSubmatch(artsrc)
 		if len(m1) < 2 {
-			logs.Error("Find href fail, %s", artsrc)
-			return
+			utee.Chk(fmt.Errorf("Find href fail, %s", artsrc))
 		}
 		coverurl := m1[1]
 		if *withImg == 0 {
