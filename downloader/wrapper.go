@@ -1,24 +1,11 @@
-// Copyright 2016 laosj Author @songtianyi. All Rights Reserved.
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//      http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
 package downloader
 
 import (
 	"fmt"
-	"github.com/songtianyi/rrframework/storage"
+	"github.com/quexer/utee"
 	"github.com/songtianyi/rrframework/connector/redis"
 	"github.com/songtianyi/rrframework/logs"
+	"github.com/songtianyi/rrframework/storage"
 	"io/ioutil"
 	"net"
 	"net/http"
@@ -40,36 +27,32 @@ type Url struct {
 // then save downloaded binary to storage
 type Downloader struct {
 	// exported
-	ConcurrencyLimit int                    // max number of goroutines to download
-	RedisConnStr     string                 // redis connection string
-	SourceQueue      string                 // url queue
+	ConcurrencyLimit int                      // max number of goroutines to download
+	RedisConnStr     string                   // redis connection string
+	SourceQueue      string                   // url queue
 	Store            rrstorage.StorageWrapper // for saving downloaded binary
 	UrlChannelFactor int
 
 	// inner use
-	sema chan struct{}        // for concurrency-limiting
-	flag chan struct{}        // stop flag
-	urls chan Url             // url channel queue
-	rc   *rrredis.RedisClient // redis client
+	chSema chan struct{}        // for concurrency-limiting
+	chFlag chan struct{}        // stop flag
+	chUrls chan Url             // url channel queue
+	rc     *rrredis.RedisClient // redis client
 }
 
 // Start downloader
-func (s *Downloader) Start() {
-	// connect redis
-	err, rc := rrredis.GetRedisClient(s.RedisConnStr)
-	if err != nil {
-		logs.Error("Start downloader fail %s", err)
-		return
-	}
-	s.rc = rc
+func (p *Downloader) Start() {
+	err, rc := rrredis.GetRedisClient(p.RedisConnStr)
+	utee.Chk(err)
+	p.rc = rc
 
 	// create channel
-	s.sema = make(chan struct{}, s.ConcurrencyLimit)
-	s.flag = make(chan struct{})
-	s.urls = make(chan Url, s.ConcurrencyLimit*s.UrlChannelFactor)
+	p.chSema = make(chan struct{}, p.ConcurrencyLimit)
+	p.chFlag = make(chan struct{})
+	p.chUrls = make(chan Url, p.ConcurrencyLimit*p.UrlChannelFactor)
 
 	go func() {
-		s.getUrlFromSourceQueue()
+		p.schedule()
 	}()
 
 	tick := time.Tick(2 * time.Second)
@@ -77,19 +60,19 @@ func (s *Downloader) Start() {
 loop2:
 	for {
 		select {
-		case <-s.flag:
+		case <-p.chFlag:
 			// be stopped
-			for url := range s.urls {
+			for url := range p.chUrls {
 				// push back to redis queue
-				if _, err := rc.RPush(s.SourceQueue, url.v); err != nil {
+				if _, err := rc.RPush(p.SourceQueue, url.v); err != nil {
 					logs.Error(err)
 				}
 			}
 			// end downloader
 			break loop2
-		case s.sema <- struct{}{}:
+		case p.chSema <- struct{}{}:
 			// s.sema not full
-			url, ok := <-s.urls
+			url, ok := <-p.chUrls
 			if !ok {
 				// channel closed
 				logs.Error("Channel s.urls may be closed")
@@ -97,11 +80,11 @@ loop2:
 				break loop2
 			}
 			go func() {
-				if err := s.download(url.v); err != nil {
+				if err := p.download(url.v); err != nil {
 					// download fail
 					// push back to redis
 					logs.Error("Download %s fail, %s", url.v, err)
-					if _, err := rc.RPush(s.SourceQueue, url.v); err != nil {
+					if _, err := rc.RPush(p.SourceQueue, url.v); err != nil {
 						logs.Error("Push back to redis failed, %s", err)
 					}
 				} else {
@@ -116,54 +99,47 @@ loop2:
 			}()
 		case <-tick:
 			// print this every 2 seconds
-			logs.Info("In queue: %d, doing: %d", len(s.urls), len(s.sema))
+			logs.Info("In queue: %d, doing: %d", len(p.chUrls), len(p.chSema))
 		}
 	}
 
 }
 
 // Stop downloader
-func (s *Downloader) Stop() {
-	close(s.flag)
+func (p *Downloader) Stop() {
+	close(p.chFlag)
 }
 
-// Wait all urls in redis queue be downloaded
-func (s *Downloader) WaitCloser() {
-loop:
+func (p *Downloader) WaitCloser() {
+	tok := time.Tick(time.Second * 1)
 	for {
 		select {
-		case <-time.After(1 * time.Second):
-			// len
-			if len(s.urls) > 0 || len(s.sema) > 1 {
+		case <-tok:
+			if len(p.chUrls) > 0 || len(p.chSema) > 1 {
 				// TODO there is a chance that last url downloading process be interupted
 				continue
 			}
-			if v, err := s.rc.LLen(s.SourceQueue); err != nil || v != 0 {
+			if v, err := p.rc.LLen(p.SourceQueue); err != nil || v != 0 {
 				if err != nil {
 					logs.Error(err)
 				}
 				continue
 			}
-			break loop
+			return
 		}
 	}
 }
 
-func (s *Downloader) download(url string) error {
-
-	defer func() { <-s.sema }() // release
-
-	// check if this url is downloaded
-	exist, err := s.rc.HMExists(URL_CACHE_KEY, url)
+func (p *Downloader) download(url string) error {
+	defer func() { <-p.chSema }() // release
+	exist, err := p.rc.HMExists(URL_CACHE_KEY, url)
 	if err != nil {
 		return err
 	}
 	if exist {
-		// downloaded
 		logs.Info("%s downloaded", url)
 		return nil
 	}
-
 	logs.Info("Downloading %s", url)
 	client := http.Client{
 		Transport: &http.Transport{
@@ -178,49 +154,39 @@ func (s *Downloader) download(url string) error {
 	if response.StatusCode != 200 {
 		return fmt.Errorf("StatusCode %d", response.StatusCode)
 	}
-
-	// read binary from body
+	filename := func() {
+		strs := strings.Split(url, "/")
+		if len(strs) < 1 {
+			utee.Chk(fmt.Errorf("Bad URL:", url))
+		}
+		return strs[len(strs)-1]
+	}
 	b, err := ioutil.ReadAll(response.Body)
 	if err != nil {
 		return err
 	}
-
-	urlv := strings.Split(url, "/")
-	if len(urlv) < 1 {
-		return fmt.Errorf("invalid url %s", url)
-	}
-	filename := urlv[len(urlv)-1]
-	// save binary to storage
-	if err := s.Store.Save(b, filename); err != nil {
+	if err := p.Store.Save(b, filename()); err != nil {
 		return err
 	}
 	return nil
 }
 
-func (s *Downloader) getUrlFromSourceQueue() {
-loop:
+func (p *Downloader) schedule() {
 	for {
-		url, err := s.rc.LPop(s.SourceQueue)
+		url, err := p.rc.LPop(p.SourceQueue)
 		if err == rrredis.Nil {
-			// empty queue, sleep while
 			time.Sleep(5 * time.Second)
-			// continue the loop
 			continue
 		}
 		if err != nil {
 			logs.Error(err)
-			// TODO reconnect to redis
-			// wait recovery
 			time.Sleep(10 * time.Second)
-			// continue the loop
 			continue
 		}
 		select {
-		case <-s.flag:
-			// be stopped
-			break loop
-		case s.urls <- Url{v: url}:
-			// trying to push url to urls channel
+		case <-p.chFlag:
+			return
+		case p.chUrls <- Url{v: url}:
 		}
 	}
 }
