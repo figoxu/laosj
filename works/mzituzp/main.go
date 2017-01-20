@@ -24,13 +24,13 @@ func main() {
 	}()
 
 	// step1: find total pages
-	s, err := spider.CreateSpiderFromUrl("http://www.mzitu.com/share")
+	s, err := spider.NewSpider("http://www.mzitu.com/share")
 	if err != nil {
 		logs.Error(err)
 		return
 	}
 	rs, _ := s.GetText("div.main>div.main-content>div.postlist>div>div.pagenavi-cm>a")
-	max := spider.FindMaxFromSliceString(1, rs)
+	max := spider.FindMaxInt(1, rs)
 
 	// step2: for every page, find all img tags
 	var wg sync.WaitGroup
@@ -40,7 +40,7 @@ func main() {
 		wg.Add(1)
 		go func(ix int) {
 			defer wg.Done()
-			ns, err := spider.CreateSpiderFromUrl(s.Url + "/comment-page-" + strconv.Itoa(ix) + "#comments/")
+			ns, err := spider.NewSpider(s.Url + "/comment-page-" + strconv.Itoa(ix) + "#comments/")
 			if err != nil {
 				logs.Error(err)
 				return

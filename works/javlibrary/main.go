@@ -35,7 +35,7 @@ func parseStar(item string, artist string) {
 	}
 	url := m[1]
 	jvname := strings.Split(url, "=")[1]
-	s, err := spider.CreateSpiderFromUrl(JAV_PREFIX + url + "&mode=2")
+	s, err := spider.NewSpider(JAV_PREFIX + url + "&mode=2")
 	if err != nil {
 		utee.Chk(err)
 	}
@@ -68,13 +68,13 @@ func runList() {
 	// for every prefix=?
 	for i := 0; i < 26; i++ {
 		// get page num
-		s, err := spider.CreateSpiderFromUrl(JAV_PREFIX + "star_list.php?prefix=" + string(rune(i+65)))
+		s, err := spider.NewSpider(JAV_PREFIX + "star_list.php?prefix=" + string(rune(i+65)))
 		if err != nil {
 			logs.Error(err)
 			continue
 		}
 		rs, _ := s.GetText("div.page_selector>a.page")
-		max := spider.FindMaxFromSliceString(0, rs)
+		max := spider.FindMaxInt(0, rs)
 		// for every page
 		var wg sync.WaitGroup
 		for j := 1; j <= max; j++ {
@@ -82,7 +82,7 @@ func runList() {
 			wg.Add(1)
 			go func(k int) {
 				defer wg.Done()
-				s1, err := spider.CreateSpiderFromUrl(s.Url + "&page=" + string(rune(k)))
+				s1, err := spider.NewSpider(s.Url + "&page=" + string(rune(k)))
 				if err != nil {
 					logs.Error(err)
 					return

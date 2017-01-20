@@ -24,13 +24,13 @@ func main() {
 	}()
 
 	// step1: find total index pages
-	s, err := spider.CreateSpiderFromUrl("http://www.mzitu.com/taiwan")
+	s, err := spider.NewSpider("http://www.mzitu.com/taiwan")
 	if err != nil {
 		logs.Error(err)
 		return
 	}
 	rs, _ := s.GetText("div.main>div.main-content>div.postlist>nav.navigation.pagination>div.nav-links>a.page-numbers")
-	max := spider.FindMaxFromSliceString(1, rs)
+	max := spider.FindMaxInt(1, rs)
 
 	// step2: for every index page, find every post entrance
 	var wg sync.WaitGroup
@@ -40,7 +40,7 @@ func main() {
 		wg.Add(1)
 		go func(ix int) {
 			defer wg.Done()
-			ns, err := spider.CreateSpiderFromUrl(s.Url + "/page/" + strconv.Itoa(ix))
+			ns, err := spider.NewSpider(s.Url + "/page/" + strconv.Itoa(ix))
 			if err != nil {
 				logs.Error(err)
 				return
@@ -64,18 +64,18 @@ func main() {
 
 	for _, v := range step2 {
 		// step3: step in entrance, find max pagenum
-		ns1, err := spider.CreateSpiderFromUrl(v)
+		ns1, err := spider.NewSpider(v)
 		if err != nil {
 			logs.Error(err)
 			return
 		}
 		t1, _ := ns1.GetText("div.main>div.content>div.pagenavi>a")
-		maxx := spider.FindMaxFromSliceString(1, t1)
+		maxx := spider.FindMaxInt(1, t1)
 		// step4: for every page
 		for j := 1; j <= maxx; j++ {
 
 			// step5: find img in this page
-			ns2, err := spider.CreateSpiderFromUrl(v + "/" + strconv.Itoa(j))
+			ns2, err := spider.NewSpider(v + "/" + strconv.Itoa(j))
 			if err != nil {
 				logs.Error(err)
 				return
